@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LedgerLens — invoice to validated ledger</title>
+<style>
+  :root{--bg:#08080f;--card:#12121e;--card2:#181828;--line:rgba(255,255,255,.10);--text:#f2f2f7;--muted:#9a9ab2;--dim:#6b6b84;--accent:#5b6cff;--accent2:#8b5cf6;--good:#34d399;--bad:#f87171;--warn:#fbbf24}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text);line-height:1.6;padding:28px 18px 60px}
+  .wrap{max-width:860px;margin:0 auto}
+  h1{font-size:26px;letter-spacing:-.02em}
+  .sub{color:var(--muted);font-size:14px;margin-top:4px}
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+  .logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:grid;place-items:center;font-size:17px}
+  .drop{margin-top:22px;border:2px dashed var(--line);border-radius:18px;padding:38px 20px;text-align:center;background:var(--card);transition:.2s}
+  .drop.over{border-color:var(--accent);background:var(--card2)}
+  .drop p{color:var(--muted);font-size:14px}
+  .btn{display:inline-flex;align-items:center;gap:8px;margin-top:14px;padding:11px 20px;border-radius:999px;background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-weight:600;font-size:14px;border:0;cursor:pointer}
+  .btn:disabled{opacity:.5;cursor:default}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;margin-top:16px}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line)}
+  th{color:var(--dim);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+  .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:600}
+  .ok{background:rgba(52,211,153,.14);color:var(--good)}
+  .bad{background:rgba(248,113,113,.14);color:var(--bad)}
+  .warn{background:rgba(251,191,36,.14);color:var(--warn)}
+  .check{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
+  .check:last-child{border:0}
+  .row{display:flex;justify-content:space-between;gap:12px;padding:6px 0;font-size:14px}
+  .row b{font-variant-numeric:tabular-nums}
+  pre{background:#0d0d18;border:1px solid var(--line);border-radius:12px;padding:12px;overflow:auto;font-size:12px;color:var(--muted);max-height:280px}
+  .hidden{display:none}
+  .spinner{width:18px;height:18px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .err{color:var(--bad);font-size:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand"><div class="logo">🧾</div><h1>LedgerLens</h1></div>
+  <div class="sub">Drop an invoice, statement or receipt — get structured entries, arithmetic-checked before anything reaches the ledger.</div>
+
+  <div class="drop" id="drop">
+    <p><b>Drop a PDF or photo here</b></p>
+    <p>or</p>
+    <input type="file" id="file" accept=".pdf,image/*" class="hidden">
+    <button class="btn" id="pick">Choose file</button>
+    <p class="sub" style="margin-top:10px" id="fname"></p>
+  </div>
+
+  <div id="loading" class="card hidden"><div style="display:flex;gap:10px;align-items:center"><div class="spinner"></div><span>Reading the document…</span></div></div>
+  <div id="error" class="card hidden err"></div>
+  <div id="result" class="hidden"></div>
+</div>
+
+<script>
+const drop = document.getElementById('drop');
+const input = document.getElementById('file');
+const pick = document.getElementById('pick');
+const loading = document.getElementById('loading');
+const errorBox = document.getElementById('error');
+const result = document.getElementById('result');
+let current = null;
+
+pick.onclick = () => input.click();
+input.onchange = () => { if (input.files[0]) send(input.files[0]); };
+['dragenter','dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) send(f); });
+
+const money = v => (v === null || v === undefined || v === '') ? '—' : Number(v).toFixed(3);
+
+async function send(file) {
+  current = file;
+  document.getElementById('fname').textContent = file.name + ' · ' + (file.size/1024).toFixed(0) + ' KB';
+  result.classList.add('hidden'); errorBox.classList.add('hidden'); loading.classList.remove('hidden');
+  const fd = new FormData(); fd.append('file', file);
+  try {
+    const res = await fetch('api.php', { method: 'POST', body: fd });
+    const data = await res.json();
+    loading.classList.add('hidden');
+    if (!res.ok || data.error) { errorBox.textContent = 'Could not read: ' + (data.error || res.status) + (data.detail ? ' — ' + data.detail : ''); errorBox.classList.remove('hidden'); return; }
+    render(data);
+  } catch (e) {
+    loading.classList.add('hidden');
+    errorBox.textContent = 'Network error: ' + e.message; errorBox.classList.remove('hidden');
+  }
+}
+
+function render(r) {
+  const d = r.document || {};
+  const statusPill = r.status === 'ok' ? '<span class="pill ok">Validated</span>'
+    : r.status === 'mismatch' ? '<span class="pill bad">Arithmetic mismatch</span>'
+    : '<span class="pill warn">Needs review</span>';
+
+  const lines = (d.line_items || []).map(l => `<tr><td>${esc(l.description || '')}</td><td>${l.qty ?? ''}</td><td>${money(l.unit_price)}</td><td>${money(l.amount)}</td></tr>`).join('');
+
+  const checks = (r.checks || []).map(c => `<div class="check"><span>${c.ok ? '✅' : '❌'} ${esc(c.rule)}</span><span><b>${money(c.expected)}</b> vs ${money(c.found)}</span></div>`).join('') || '<div class="sub">No arithmetic checks could be applied.</div>';
+
+  result.innerHTML = `
+    <div class="card">
+      <div class="row"><span class="sub">${esc(r.file || '')}</span>${statusPill}</div>
+      <div style="margin-top:10px">
+        <div class="row"><span>Invoice</span><b>${esc(d.invoice_no || '—')}</b></div>
+        <div class="row"><span>Date</span><b>${esc(d.date || '—')}</b></div>
+        <div class="row"><span>Customer</span><b>${esc(d.customer || '—')}</b></div>
+        <div class="row"><span>PO / Ref</span><b>${esc(d.po_ref || '—')}</b></div>
+      </div>
+      ${lines ? `<table style="margin-top:14px"><thead><tr><th>Description</th><th>Qty</th><th>Unit</th><th>Amount</th></tr></thead><tbody>${lines}</tbody></table>` : ''}
+      <div style="margin-top:14px">
+        <div class="row"><span>Subtotal</span><b>${money(d.subtotal)}</b></div>
+        <div class="row"><span>Discount</span><b>${money(d.discount)}</b></div>
+        <div class="row"><span>Advances</span><b>${money(d.advances)}</b></div>
+        <div class="row"><span>Taxable</span><b>${money(d.taxable)}</b></div>
+        <div class="row"><span>VAT ${d.vat_rate ? '('+d.vat_rate+'%)' : ''}</span><b>${money(d.vat_amount)}</b></div>
+        <div class="row" style="font-size:16px"><span><b>Net due</b></span><b>${money(d.net_due ?? d.total)} ${esc(d.currency || '')}</b></div>
+      </div>
+    </div>
+    <div class="card"><h3 style="font-size:15px;margin-bottom:8px">Accounting checks</h3>${checks}</div>
+    <div class="card"><details><summary class="sub">Raw JSON</summary><pre>${esc(JSON.stringify(d, null, 2))}</pre></details></div>
+    <div style="margin-top:12px"><button class="btn" id="again">Check another document</button></div>`;
+  result.classList.remove('hidden');
+  document.getElementById('again').onclick = () => { result.classList.add('hidden'); input.value=''; };
+}
+
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+</script>
+</body>
+</html>
