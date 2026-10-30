@@ -64,3 +64,33 @@ Then one document with a deliberate ₹/decimal error → flagged red, not poste
 ## Privacy
 Documents stay on the user's own server. No third-party storage; the vision provider is
 called only for the page being extracted, and can be swapped for a local open-weights model.
+
+---
+
+## Official rules (from the hackathon #faqs, 30 Oct)
+
+**Submission must include**
+- A **3-minute demo video** (max)
+- A link to a **public repository**
+- Names of all contributors
+- Deadline: **4 Nov 2026, 9:00 PM ET** (= 5 Nov, 5:00 AM Bahrain) — late entries rejected
+
+**Judging — four criteria, equal weight**
+1. Impact
+2. Use of Meta AI tooling
+3. Technical depth and execution
+4. Demo quality
+Top five per track reach the finals.
+
+**Disqualifiers / discouraged**
+- Generic projects: basic RAG apps, simple chatbots, personality analyzers
+- Politics or war content; anything against legal/ethical policy
+
+**Bonus awards** (5k–20k): Most Viral Project and Community Vote — these depend on **X (Twitter) engagement through 8 Nov**, so the project must be posted publicly on X.
+
+**Credits**
+- $150 Meta Model API credits — claim by 4 Nov; card required; watch usage beyond the credit
+- Baseten: $100 + 2M tokens/min (up to 2,000 participants) — model id `meta-models/muse-spark-open-1026`
+- Modal: $100 (first 1,000 participants); Fireworks TBC
+
+**Support**: `#office-hours` weekdays 10–11 AM ET; tag @CV for general questions.

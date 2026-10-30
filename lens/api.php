@@ -49,9 +49,11 @@ Return ONLY JSON with this shape:
  "vat_rate": number|null,
  "vat_amount": number|null,
  "total": number|null,
- "net_due": number|null
+ "net_due": number|null,
+ "ageing": {"current": number|null, "0_30": number|null, "30_60": number|null, "60_90": number|null, "above_90": number|null}
 }
 Rules: numbers only (no currency symbols, no thousands separators, 3 decimals). If a value is absent use null.
+CRITICAL for statements: list EVERY invoice row you can see, one object per row, in document order. Do NOT summarise, group, or show only the largest items. If the statement spans several pages, extract the rows from ALL pages. A statement with 48 rows must return 48 line_items.
 Do not invent values. If the document is not an invoice/statement, use doc_type "unknown" and fill what you can.
 TXT;
 
@@ -62,7 +64,7 @@ $payload = [
             ['text' => $prompt],
         ],
     ]],
-    'generationConfig' => ['temperature' => 0, 'response_mime_type' => 'application/json'],
+    'generationConfig' => ['temperature' => 0, 'response_mime_type' => 'application/json', 'maxOutputTokens' => 8192],
 ];
 
 $url = 'https://generativelanguage.googleapis.com/v1beta/models/' . GEMINI_MODEL . ':generateContent?key=' . urlencode($API_KEY);
@@ -78,6 +80,23 @@ curl_setopt_array($ch, [
 $resp = curl_exec($ch);
 $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
 $cerr = curl_error($ch);
+
+// retry once on transient provider failures
+if ($resp === false || $code >= 500 || $code === 429) {
+    usleep(1200000);
+    $ch2 = curl_init($url);
+    curl_setopt_array($ch2, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_POST => true,
+        CURLOPT_HTTPHEADER => ['Content-Type: application/json'],
+        CURLOPT_POSTFIELDS => json_encode($payload),
+        CURLOPT_TIMEOUT => 120,
+    ]);
+    $r2 = curl_exec($ch2);
+    $c2 = curl_getinfo($ch2, CURLINFO_HTTP_CODE);
+    if ($r2 !== false && $c2 < 400) { $resp = $r2; $code = $c2; }
+    curl_close($ch2);
+}
 curl_close($ch);
 
 if ($resp === false || $code >= 400) {
@@ -132,6 +151,28 @@ foreach ($lines as $l) {
 if ($lineCount && $taxable !== null) {
     $expected = round($sumLines - ($discount ?? 0) - ($advances ?? 0), 3);
     $checks[] = ['rule' => 'Sum of lines − discount − advances = taxable', 'expected' => $expected, 'found' => round($taxable, 3), 'ok' => abs($expected - $taxable) <= 0.01];
+}
+
+// flatten ageing buckets if the model returned them nested
+if (isset($doc['ageing']) && is_array($doc['ageing'])) {
+    $map = ['current' => 'current', '0_30' => 'bucket_0_30', '30_60' => 'bucket_30_60', '60_90' => 'bucket_60_90', 'above_90' => 'above_90'];
+    foreach ($map as $src => $dst) {
+        if (isset($doc['ageing'][$src]) && $doc['ageing'][$src] !== null) { $doc[$dst] = $doc['ageing'][$src]; }
+    }
+}
+
+// statement-specific: do the ageing buckets add up to the total outstanding?
+if (($doc['doc_type'] ?? '') === 'statement') {
+    $buckets = 0.0; $seenBucket = false;
+    foreach (['current','bucket_0_30','bucket_30_60','bucket_60_90','above_90'] as $bk) {
+        $v = $num($doc[$bk] ?? null);
+        if ($v !== null) { $buckets += $v; $seenBucket = true; }
+    }
+    if ($seenBucket && $net !== null) {
+        $checks[] = ['rule' => 'Ageing buckets = total outstanding', 'expected' => round($buckets, 3), 'found' => round($net, 3), 'ok' => abs($buckets - $net) <= 0.01];
+    }
+    $rows = count($lines);
+    $doc['rows_extracted'] = $rows;
 }
 
 $status = 'ok';
